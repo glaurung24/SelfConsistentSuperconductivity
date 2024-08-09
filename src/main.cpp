@@ -42,8 +42,8 @@ using namespace Visualization::MatPlotLib;
 const complex<double> i(0, 1);
 
 //Lattice size
-const int SIZE_X = 15;
-const int SIZE_Y = 15;
+const int SIZE_X = 10;
+const int SIZE_Y = 10;
 
 //Order parameter. The two buffers are alternatively swaped by setting
 //deltaCounter = 0 or 1. One buffer contains the order parameter used in the
@@ -59,103 +59,6 @@ const int MAX_ITERATIONS = 50;
 const complex<double> DELTA_INITIAL_GUESS = 0.3;
 const bool PERIODIC_BC = true;
 const bool USE_GPU = false;
-
-//Self-consistent callback that is to be called each time a diagonalization has
-//finished. Calculates the order parameter from the current solution.
-class SelfConsistencyCallback :
-	public Solver::Diagonalizer::SelfConsistencyCallback
-{
-	bool selfConsistencyCallback(Solver::Diagonalizer &solver){
-		//Clear the order parameter
-		for(unsigned int x = 0; x < SIZE_X; x++)
-			for(unsigned int y = 0; y < SIZE_Y; y++)
-				Delta[{(deltaCounter+1)%2, x, y}] = 0.;
-
-		//Calculate D(x, y) = <c_{x, y, \downarrow}c_{x, y, \uparrow}>
-		//= \sum_{E_n<E_F} conj(v_d^{(n)})*u_u^{(n)}
-		for(unsigned int x = 0; x < SIZE_X; x++){
-			for(unsigned int y = 0; y < SIZE_Y; y++){
-				for(
-					int n = 0;
-					n < solver.getModel(
-					).getBasisSize()/2;
-					n++
-				){
-					//Obtain amplitudes at site (x,y) for
-					//electron_up and hole_down components.
-					complex<double> u_u = solver.getAmplitude(
-						n,
-						{x, y, 0, 0}
-					);
-					complex<double> v_d = solver.getAmplitude(
-						n,
-						{x, y, 1, 1}
-					);
-
-					Delta[{(deltaCounter+1)%2, x, y}]
-						-= V_sc*conj(v_d)*u_u;
-				}
-			}
-		}
-
-		//Swap order parameter buffers
-		deltaCounter = (deltaCounter+1)%2;
-
-		//Calculate convergence parameter
-		double maxError = 0.;
-		for(unsigned int x = 0; x < SIZE_X; x++){
-			for(unsigned int y = 0; y < SIZE_Y; y++){
-				double error = 0.;
-				if(
-					abs(Delta[{deltaCounter, x, y}]) == 0
-					&& abs(
-						Delta[{
-							(deltaCounter+1)%2,
-							x,
-							y
-						}]
-					) == 0
-				){
-					error = 0.;
-				}
-				else{
-					error = abs(
-						Delta[{deltaCounter, x, y}]
-						- Delta[{
-							(deltaCounter+1)%2,
-							x,
-							y
-						}]
-					)/max(
-						abs(
-							Delta[{
-								deltaCounter,
-								x,
-								y
-							}]
-						),
-						abs(
-							Delta[{
-								(deltaCounter+1)%2,
-								x,
-								y
-							}]
-						)
-					);
-				}
-
-				if(error > maxError)
-					maxError = error;
-			}
-		}
-
-		//Return true or false depending on whether the result has converged or not
-		if(maxError < CONVERGENCE_LIMIT)
-			return true;
-		else
-			return false;
-	}
-} selfConsistencyCallback;
 
 
 bool selfConsistencyStep(Solver::Diagonalizer solver){
@@ -334,8 +237,8 @@ int main(int argc, char **argv){
 
 	//Plot DOS
 	//Set up the PropertyExtractor.
-	const double LOWER_BOUND = -2;
-	const double UPPER_BOUND = 2;
+	const double LOWER_BOUND = -1;
+	const double UPPER_BOUND = 1;
 	const unsigned int RESOLUTION = 1000;
 	PropertyExtractor::Diagonalizer propertyExtractor(solver);
 	propertyExtractor.setEnergyWindow(
@@ -345,7 +248,7 @@ int main(int argc, char **argv){
 	);
 	Property::DOS dos = propertyExtractor.calculateDOS();
 	//Smooth the DOS.
-	const double SMOOTHING_SIGMA = 0.1;
+	const double SMOOTHING_SIGMA = 0.05;
 	const unsigned int SMOOTHING_WINDOW = 201;
 	dos = Smooth::gaussian(dos, SMOOTHING_SIGMA, SMOOTHING_WINDOW);
 	plotter.plot(dos);
