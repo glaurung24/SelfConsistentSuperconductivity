@@ -34,6 +34,8 @@
 
 #include <complex>
 #include <iostream>
+#include <cstdlib>
+#include <ctime>
 
 using namespace std;
 using namespace TBTK;
@@ -42,8 +44,8 @@ using namespace Visualization::MatPlotLib;
 const complex<double> i(0, 1);
 
 //Lattice size
-const int SIZE_X = 10;
-const int SIZE_Y = 10;
+const int SIZE_X = 30;
+const int SIZE_Y = 30;
 
 //Order parameter. The two buffers are alternatively swaped by setting
 //deltaCounter = 0 or 1. One buffer contains the order parameter used in the
@@ -54,11 +56,11 @@ unsigned int deltaCounter = 0;
 
 //Superconducting pair potential, convergence limit, max iterations, and initial guess
 const double V_sc = 2.;
-const double CONVERGENCE_LIMIT = 0.0001;
+const double CONVERGENCE_LIMIT = 0.000001;
 const int MAX_ITERATIONS = 50;
-const complex<double> DELTA_INITIAL_GUESS = 0.3;
+const complex<double> DELTA_INITIAL_GUESS = 0.3 + 0.1*i;
 const bool PERIODIC_BC = true;
-const bool USE_GPU = false;
+const bool USE_GPU = true;
 
 
 bool selfConsistencyStep(Solver::Diagonalizer solver){
@@ -128,9 +130,15 @@ class DeltaCallback : public HoppingAmplitude::AmplitudeCallback{
 
 //Function responsible for initializing the order parameter
 void initDelta(){
-	for(unsigned int x = 0; x < SIZE_X; x++)
-		for(unsigned int y = 0; y < SIZE_Y; y++)
-			Delta[{x, y}] = DELTA_INITIAL_GUESS;
+	const double rand_spread = 1.5*abs(DELTA_INITIAL_GUESS);
+	srand (static_cast <unsigned> (time(0)));
+	for(unsigned int x = 0; x < SIZE_X; x++){
+		for(unsigned int y = 0; y < SIZE_Y; y++){
+			double a = static_cast <double> (rand()) / static_cast <double> (RAND_MAX);
+			double b = static_cast <double> (rand()) / static_cast <double> (RAND_MAX);
+			Delta[{x, y}] = DELTA_INITIAL_GUESS + rand_spread*(a+i*b);
+		}
+	}
 }
 
 int main(int argc, char **argv){
@@ -210,6 +218,7 @@ int main(int argc, char **argv){
 	// Selfconsistency loop
 	for(int loop_counter = 0; loop_counter < MAX_ITERATIONS; ++loop_counter){
 		cout << "Sc loop nr: " << loop_counter << endl;
+		cout << Delta[{0,0}] << endl;
 		if(selfConsistencyStep(solver)){
 			break; // Exit loop if self consistency condition is achieved
 		}
