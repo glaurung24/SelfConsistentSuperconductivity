@@ -44,8 +44,9 @@ using namespace Visualization::MatPlotLib;
 const complex<double> i(0, 1);
 
 //Lattice size
-const int SIZE_X = 30;
-const int SIZE_Y = 30;
+const int SIZE_X = 54;
+const int SIZE_Y = 54;
+const int CORNER_LENGTH = SIZE_X;
 
 //Order parameter. The two buffers are alternatively swaped by setting
 //deltaCounter = 0 or 1. One buffer contains the order parameter used in the
@@ -55,12 +56,20 @@ Array<complex<double>> Delta({SIZE_X, SIZE_Y});
 unsigned int deltaCounter = 0;
 
 //Superconducting pair potential, convergence limit, max iterations, and initial guess
-const double V_sc = 2.;
-const double CONVERGENCE_LIMIT = 0.000001;
+const double V_sc = 1.24;
+const double CONVERGENCE_LIMIT = 0.0000001;
 const int MAX_ITERATIONS = 50;
-const complex<double> DELTA_INITIAL_GUESS = 0.3 + 0.1*i;
-const bool PERIODIC_BC = true;
+const complex<double> DELTA_INITIAL_GUESS = 0.25;
+const bool PERIODIC_BC = false;
 const bool USE_GPU = true;
+
+
+bool cornerCheck(unsigned x, unsigned y){
+	if(x > y && (x-y) > CORNER_LENGTH){
+		return true;
+	}
+	return false;
+}
 
 
 bool selfConsistencyStep(Solver::Diagonalizer solver){
@@ -75,12 +84,29 @@ bool selfConsistencyStep(Solver::Diagonalizer solver){
 	//Calculate new order parameter from gap equation for each site
 	for(unsigned int x = 0; x < SIZE_X; x++){
 		for(unsigned int y = 0; y < SIZE_Y; y++){
-			for(unsigned spin = 0; spin < 2; ++spin){
+				if(cornerCheck(x,y) && !PERIODIC_BC){
+					continue;
+				}
 				// Gap equation
-				Delta[{x, y}] += 0.5*V_sc *(-1.+2*spin) *property_extractor.calculateExpectationValue(
-					{x,y, (spin+1)%2, 1 },
-					{x,y, spin, 0 }
-				);
+				if(x+1 < SIZE_X || PERIODIC_BC){
+					Delta[{x, y}] += V_sc  *property_extractor.calculateExpectationValue(
+						{(x+1)%SIZE_X,y, 0},
+						{x,y, 1}
+					);
+					Delta[{x, y}] += V_sc *property_extractor.calculateExpectationValue(
+						{x,y, 0},
+						{(x+1)%SIZE_X,y,1}
+					);
+				}
+				if(y+1 < SIZE_Y || PERIODIC_BC){
+					Delta[{x, y}] -= V_sc  *property_extractor.calculateExpectationValue(
+						{x,y, 0},
+						{x,(y+1)%SIZE_Y, 1}
+					);
+					Delta[{x, y}] -= V_sc *property_extractor.calculateExpectationValue(
+						{x,(y+1)%SIZE_Y, 0},
+						{x,y,1}
+					);
 			}
 		}
 	}
@@ -94,6 +120,8 @@ bool selfConsistencyStep(Solver::Diagonalizer solver){
 				maxError = error;
 		}
 	}
+	double mixing_factor = 0.5;
+	Delta = (1.-mixing_factor)*delta_old + mixing_factor*Delta;
 
 	//Return true or false depending on whether the result has converged or not
 	if(maxError < CONVERGENCE_LIMIT)
@@ -113,18 +141,30 @@ class DeltaCallback : public HoppingAmplitude::AmplitudeCallback{
 	) const{
 		//Obtain indices
 		unsigned int x = from[0];
+		unsigned int xd = to[0];
 		unsigned int y = from[1];
-		unsigned int spin = from[2];
-		unsigned int particleHole = from[3];
+		unsigned int yd = to[1];
+		unsigned int ph = from[2];
 
-		if(spin == 0 && particleHole == 0)
-			return conj(Delta[{x, y}]);
-		else if(spin == 1 && particleHole == 0)
-			return -conj(Delta[{x, y}]);
-		else if(spin == 0 && particleHole == 1)
-			return -Delta[{x, y}];
-		else
-			return Delta[{x, y}];
+		double prefactor = -1.;
+		if( y != yd && x == xd){
+			prefactor *= -1.;
+		}
+
+		if(xd>x){
+			++x;
+		}
+		x = x%(SIZE_X);
+		if(yd>y){
+			++y;
+		}
+		y = y%(SIZE_Y);
+		if( ph == 0){
+			return prefactor*conj(Delta[{x, y}]);
+		}
+		else{
+			return prefactor*Delta[{x, y}];
+		}
 	}
 } deltaCallback;
 
@@ -134,9 +174,13 @@ void initDelta(){
 	srand (static_cast <unsigned> (time(0)));
 	for(unsigned int x = 0; x < SIZE_X; x++){
 		for(unsigned int y = 0; y < SIZE_Y; y++){
-			double a = static_cast <double> (rand()) / static_cast <double> (RAND_MAX);
-			double b = static_cast <double> (rand()) / static_cast <double> (RAND_MAX);
-			Delta[{x, y}] = DELTA_INITIAL_GUESS + rand_spread*(a+i*b);
+			if(cornerCheck(x,y)){
+				continue;
+			}
+			double a = static_cast <double> (rand()) / static_cast <double> (RAND_MAX)-static_cast <double>(RAND_MAX)/2.;
+			double b = static_cast <double> (rand()) / static_cast <double> (RAND_MAX)-static_cast <double>(RAND_MAX)/2.;
+			complex<double> c_number = (a+i*b)/abs((a+i*b));
+			Delta[{x, y}] = DELTA_INITIAL_GUESS*c_number;
 		}
 	}
 }
@@ -146,56 +190,82 @@ int main(int argc, char **argv){
 	Initialize();
 
 	//Parameters.
-	complex<double> mu = -1.0;
+	complex<double> mu = 0.0;
 	complex<double> t = 1.0;
+	complex<double> tp = 0.5;
 
 	//Create model and set up hopping parameters.
 	Model model;
 	for(int x = 0; x < SIZE_X; x++){
 		for(int y = 0; y < SIZE_Y; y++){
-			for(int s = 0; s < 2; s++){
+			if(cornerCheck(x,y) && !PERIODIC_BC){
+				continue;
+			}
+			for(int ph = 0; ph < 2; ph++){
 				//Add hopping ampltudes corresponding to
 				//chemical potential.
 				model << HoppingAmplitude(
-					-mu,
-					{x, y, s, 0},
-					{x, y, s, 0}
-				);
-				model << HoppingAmplitude(
-					mu,
-					{x, y, s, 1},
-					{x, y, s, 1}
+					-mu*(1.-2.*ph),
+					{x, y, ph},
+					{x, y, ph}
 				);
 
 				//Add hopping parameters corresponding to t.
 				if(x+1 < SIZE_X || PERIODIC_BC){
 					model << HoppingAmplitude(
-						-t,
-						{(x+1)%SIZE_X, y, s, 0},
-						{x, y, s, 0}
+						-t*(1.-2.*ph),
+						{(x+1)%SIZE_X, y, ph},
+						{x, y, ph}
 					) + HC;
+				}
+				if(x+2 < SIZE_X || PERIODIC_BC){
 					model << HoppingAmplitude(
-						t,
-						{(x+1)%SIZE_X, y, s, 1},
-						{x, y, s, 1}
+						tp*(1.-2.*ph),
+						{(x+2)%SIZE_X, y, ph},
+						{x, y, ph}
 					) + HC;
 				}
 				if(y+1 < SIZE_Y || PERIODIC_BC){
 					model << HoppingAmplitude(
-						-t,
-						{x, (y+1)%SIZE_Y, s, 0},
-						{x, y, s, 0}
-					) + HC;
-					model << HoppingAmplitude(
-						t,
-						{x, (y+1)%SIZE_Y, s, 1},
-						{x, y, s, 1}
+						-t*(1.-2.*ph),
+						{x, (y+1)%SIZE_Y, ph},
+						{x, y, ph}
 					) + HC;
 				}
+				if(y+2 < SIZE_Y || PERIODIC_BC){
+					model << HoppingAmplitude(
+						tp*(1.-2.*ph),
+						{x, (y+2)%SIZE_Y, ph},
+						{x, y, ph}
+					) + HC;
+				}
+			}
+			if(x+1 < SIZE_X || PERIODIC_BC){
 				model << HoppingAmplitude(
 					deltaCallback,
-					{x, y, (s+1)%2, 1},
-					{x, y, s, 0}
+					// -DELTA_INITIAL_GUESS,
+					{(x+1)%SIZE_X, y, 0},
+					{x, y, 1}
+				) + HC;
+				model << HoppingAmplitude(
+					deltaCallback,
+					// -DELTA_INITIAL_GUESS,
+					{x, y, 0},
+					{(x+1)%SIZE_X, y, 1}
+				) + HC;
+			}
+			if(y+1 < SIZE_Y || PERIODIC_BC){
+				model << HoppingAmplitude(
+					deltaCallback,
+					// DELTA_INITIAL_GUESS,
+					{x, (y+1)%SIZE_Y, 0},
+					{x, y, 1}
+				) + HC;
+				model << HoppingAmplitude(
+					deltaCallback,
+					// DELTA_INITIAL_GUESS,
+					{x, y, 0},
+					{x, (y+1)%SIZE_Y, 1}
 				) + HC;
 			}
 		}
@@ -215,7 +285,7 @@ int main(int argc, char **argv){
 	solver.setUseGPUAcceleration(USE_GPU);
 	solver.run();
 
-	// Selfconsistency loop
+	// // Selfconsistency loop
 	for(int loop_counter = 0; loop_counter < MAX_ITERATIONS; ++loop_counter){
 		cout << "Sc loop nr: " << loop_counter << endl;
 		cout << Delta[{0,0}] << endl;
@@ -257,7 +327,7 @@ int main(int argc, char **argv){
 	);
 	Property::DOS dos = propertyExtractor.calculateDOS();
 	//Smooth the DOS.
-	const double SMOOTHING_SIGMA = 0.05;
+	const double SMOOTHING_SIGMA = 0.01;
 	const unsigned int SMOOTHING_WINDOW = 201;
 	dos = Smooth::gaussian(dos, SMOOTHING_SIGMA, SMOOTHING_WINDOW);
 	plotter.plot(dos);
